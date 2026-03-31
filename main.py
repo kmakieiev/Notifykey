@@ -1,25 +1,25 @@
-import requests
-import time
 import os
+import time
+import json
+import requests
 from dotenv import load_dotenv
 from snmp_scanner import get_keys_status
 
-# Подгружаем переменные из файла .env в систему
+# Подгружаем секреты
 load_dotenv()
 
-# Достаем наши секреты безопасно
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 
 if not TOKEN or not ADMIN_ID:
     print("🚨 Ошибка: Не найден токен или ID админа в файле .env!")
-    exit(1) # Жестко останавливаем скрипт, если секретов нет
+    exit(1)
 
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
 
-# ... дальше идет твоя функция get_updates и весь остальной код без изменений ...
 
 def get_updates(offset=None):
+    """Получает обновления от Telegram."""
     url = f"{BASE_URL}getUpdates"
     params = {"timeout": 3, "offset": offset}
     try:
@@ -30,85 +30,109 @@ def get_updates(offset=None):
         return None
 
 
-def send_message(chat_id, text):
+def send_message(chat_id, text, reply_markup=None):
+    """Отправляет текстовое сообщение (с опциональной клавиатурой)."""
     url = f"{BASE_URL}sendMessage"
     payload = {"chat_id": chat_id, "text": text}
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup)
     requests.post(url, json=payload)
 
 
+def answer_callback(callback_id, text=""):
+    """Гасит 'часики' на Inline-кнопке."""
+    url = f"{BASE_URL}answerCallbackQuery"
+    payload = {"callback_query_id": callback_id, "text": text}
+    requests.post(url, json=payload)
+
+
+def process_status_request(chat_id):
+    """Единый обработчик для вывода статуса ключей (DRY)."""
+    send_message(chat_id, "Опрашиваю свитч... ⏳")
+    status_dict = get_keys_status()
+
+    if status_dict:
+        reply_text = "Текущее состояние ключей:\n\n"
+        for port, state in sorted(status_dict.items()):
+            reply_text += f"Ключ {port}: {state}\n"
+    else:
+        reply_text = "Ошибка связи со свитчом! ⚠️"
+
+    send_message(chat_id, reply_text)
+
+
 def main():
-    print("Бот запущен и перешел в режим ожидания (Long Polling)...")
+    print("Бот запущен и перешел в режим ожидания...")
     last_update_id = None
 
+    # Инициализация памяти для Push-уведомлений
     print("Сканирую начальное состояние ключей...")
     previous_state = get_keys_status()
-
-    # На случай, если при старте свитч недоступен, делаем страховку
     if previous_state is None:
         previous_state = {}
 
-    # Основной цикл
     while True:
+        # --- БЛОК 1: ОБРАБОТКА ВХОДЯЩИХ ОТ TELEGRAM ---
         updates = get_updates(last_update_id)
 
         if updates and updates.get("ok"):
             for item in updates["result"]:
                 last_update_id = item["update_id"] + 1
 
-                message = item.get("message", {})
-                chat_id = message.get("chat", {}).get("id")
-                text = message.get("text", "")
+                # Ветка 1: Нажатие кнопки
+                if "callback_query" in item:
+                    callback = item["callback_query"]
+                    callback_id = callback["id"]
+                    chat_id = callback["message"]["chat"]["id"]
+                    data = callback["data"]
 
-                if chat_id and text:
-                    text = text.strip()  # Защита от случайных пробелов
-                    print(f"[{chat_id}]: {text}")
+                    if data == "check_status":
+                        print(f"[{chat_id}]: Нажата кнопка 'Проверить ключи'")
+                        answer_callback(callback_id, text="Опрашиваю... ⏳")
+                        process_status_request(chat_id)
 
-                    # --- БЛОК МАРШРУТИЗАЦИИ ---
-                    if text == "/start":
-                        send_message(chat_id, "Привет! На связи твоя ключница.\nЖми /status чтобы проверить ключи.")
+                # Ветка 2: Текстовые сообщения
+                elif "message" in item:
+                    message = item["message"]
+                    chat_id = message.get("chat", {}).get("id")
+                    text = message.get("text", "")
 
-                    elif text == "/status":
-                        # Отправляем заглушку, чтобы юзер знал, что процесс пошел
-                        send_message(chat_id, "Опрашиваю свитч... ⏳")
+                    if chat_id and text:
+                        text = text.strip()
+                        print(f"[{chat_id}]: {text}")
 
-                        # Дергаем SNMP сканер
-                        status_dict = get_keys_status()
+                        if text == "/start":
+                            keyboard = {
+                                "inline_keyboard": [
+                                    [{"text": "🔄 Проверить ключи", "callback_data": "check_status"}]
+                                ]
+                            }
+                            send_message(chat_id, "Привет! На связи твоя ключница.\nЖми кнопку ниже:",
+                                         reply_markup=keyboard)
 
-                        # Формируем красивый текст ответа
-                        if status_dict:
-                            reply_text = "Текущее состояние ключей:\n\n"
-                            for port, state in sorted(status_dict.items()):
-                                reply_text += f"Ключ {port}: {state}\n"
+                        elif text == "/status":
+                            process_status_request(chat_id)
+
                         else:
-                            reply_text = "Ошибка связи со свитчом! ⚠️"
+                            send_message(chat_id, "Я такой команды не знаю. Попробуй /status")
 
-                        # Отправляем финальный результат
-                        send_message(chat_id, reply_text)
-
-                    else:
-                        send_message(chat_id, "Я такой команды не знаю. Попробуй /status")
-
-        time.sleep(0.1)
-
-        # 1. Делаем свежий срез данных
+        # --- БЛОК 2: ФОНОВЫЙ МОНИТОРИНГ ЖЕЛЕЗА (PUSH-АЛЕРТЫ) ---
         current_state = get_keys_status()
 
-        # 2. Если данные пришли, начинаем детектив
         if current_state:
             for port, current_status in current_state.items():
-                # Достаем старый статус этого же порта
                 old_status = previous_state.get(port)
 
-                # Если статусы не совпадают — бинго, что-то произошло!
-                if current_status != old_status:
-                    # Пушим уведомление админу!
+                # Если статус изменился - бьем тревогу
+                if old_status and current_status != old_status:
                     alert_msg = f"🔔 Внимание! Изменение на порту {port}: {current_status}"
                     send_message(ADMIN_ID, alert_msg)
-                    print(alert_msg)  # Дублируем в консоль для дебага
+                    print(alert_msg)
 
-            # 3. Самое важное: обновляем память!
-            # Текущее состояние становится прошлым для следующего круга
+            # Обновляем память для следующего круга
             previous_state = current_state
+
+        time.sleep(0.1)
 
 
 if __name__ == "__main__":
