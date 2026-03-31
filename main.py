@@ -31,18 +31,13 @@ def get_updates(offset=None):
 
 
 def send_message(chat_id, text, reply_markup=None):
-    """Отправляет текстовое сообщение (с опциональной клавиатурой)."""
+    """Отправляет текстовое сообщение (с опциональной Reply-клавиатурой)."""
     url = f"{BASE_URL}sendMessage"
     payload = {"chat_id": chat_id, "text": text}
+
     if reply_markup:
         payload["reply_markup"] = json.dumps(reply_markup)
-    requests.post(url, json=payload)
 
-
-def answer_callback(callback_id, text=""):
-    """Гасит 'часики' на Inline-кнопке."""
-    url = f"{BASE_URL}answerCallbackQuery"
-    payload = {"callback_query_id": callback_id, "text": text}
     requests.post(url, json=payload)
 
 
@@ -79,20 +74,8 @@ def main():
             for item in updates["result"]:
                 last_update_id = item["update_id"] + 1
 
-                # Ветка 1: Нажатие кнопки
-                if "callback_query" in item:
-                    callback = item["callback_query"]
-                    callback_id = callback["id"]
-                    chat_id = callback["message"]["chat"]["id"]
-                    data = callback["data"]
-
-                    if data == "check_status":
-                        print(f"[{chat_id}]: Нажата кнопка 'Проверить ключи'")
-                        answer_callback(callback_id, text="Опрашиваю... ⏳")
-                        process_status_request(chat_id)
-
-                # Ветка 2: Текстовые сообщения
-                elif "message" in item:
+                # Обрабатываем только текстовые сообщения
+                if "message" in item:
                     message = item["message"]
                     chat_id = message.get("chat", {}).get("id")
                     text = message.get("text", "")
@@ -102,19 +85,26 @@ def main():
                         print(f"[{chat_id}]: {text}")
 
                         if text == "/start":
-                            keyboard = {
-                                "inline_keyboard": [
-                                    [{"text": "🔄 Проверить ключи", "callback_data": "check_status"}]
-                                ]
+                            # Выдаем постоянное главное меню
+                            reply_keyboard = {
+                                "keyboard": [
+                                    [{"text": "🔄 Статус ключей"}]
+                                ],
+                                "resize_keyboard": True,
+                                "is_persistent": True
                             }
-                            send_message(chat_id, "Привет! На связи твоя ключница.\nЖми кнопку ниже:",
-                                         reply_markup=keyboard)
+                            send_message(
+                                chat_id,
+                                "Привет! На связи твоя ключница.\nГлавное меню активировано 👇",
+                                reply_markup=reply_keyboard
+                            )
 
-                        elif text == "/status":
+                        # Реагируем и на команду, и на кнопку из меню
+                        elif text in ["/status", "🔄 Статус ключей"]:
                             process_status_request(chat_id)
 
                         else:
-                            send_message(chat_id, "Я такой команды не знаю. Попробуй /status")
+                            send_message(chat_id, "Я такой команды не знаю. Воспользуйся кнопкой меню внизу экрана.")
 
         # --- БЛОК 2: ФОНОВЫЙ МОНИТОРИНГ ЖЕЛЕЗА (PUSH-АЛЕРТЫ) ---
         current_state = get_keys_status()
@@ -123,13 +113,13 @@ def main():
             for port, current_status in current_state.items():
                 old_status = previous_state.get(port)
 
-                # Если статус изменился - бьем тревогу
+                # Если статус изменился - пушим алерт админу
                 if old_status and current_status != old_status:
                     alert_msg = f"🔔 Внимание! Изменение на порту {port}: {current_status}"
                     send_message(ADMIN_ID, alert_msg)
                     print(alert_msg)
 
-            # Обновляем память для следующего круга
+            # Обновляем память для следующего цикла
             previous_state = current_state
 
         time.sleep(0.1)
