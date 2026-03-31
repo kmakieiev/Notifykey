@@ -23,3 +23,11 @@ MAIN_MENU = {
     "resize_keyboard": True,
     "is_persistent": True
 }
+
+ALERT_MENU = {
+    "keyboard": [
+        [{"text": "✅ OK"}, {"text": "📜 История"}]
+    ],
+    "resize_keyboard": True,
+    "one_time_keyboard": True
+}

@@ -1,7 +1,39 @@
 import json
 import os
+import datetime
 
+HIST_FILE = "history.json"
 DB_FILE = "keys_db.json"
+HIST_FILE = "history.json"
+
+def log_event(port, name, state):
+    """Logs a hardware event with a timestamp."""
+    history = []
+    if os.path.exists(HIST_FILE):
+        with open(HIST_FILE, "r", encoding="utf-8") as f:
+            try:
+                history = json.load(f)
+            except:
+                history = []
+
+    timestamp = datetime.datetime.now().strftime("%d.%m %H:%M:%S")
+    event = f"[{timestamp}] {name} (Port {port}): {state}"
+
+    # Keep only last 10 events
+    history.insert(0, event)
+    history = history[:10]
+
+    with open(HIST_FILE, "w", encoding="utf-8") as f:
+        json.dump(history, f, ensure_ascii=False, indent=4)
+
+
+def get_history():
+    """Returns the last logged events as a single string."""
+    if not os.path.exists(HIST_FILE):
+        return "История пуста 📭"
+    with open(HIST_FILE, "r", encoding="utf-8") as f:
+        history = json.load(f)
+        return "\n".join(history) if history else "История пуста 📭"
 
 # Default schema for the first run if the database file does not exist
 DEFAULT_DB = {
@@ -12,7 +44,6 @@ DEFAULT_DB = {
     "6": {"name": "Ключ 6"},
     "7": {"name": "Ключ 7"}
 }
-
 
 def load_keys():
     """
