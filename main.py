@@ -1,54 +1,14 @@
-import os
 import time
-import json
-import requests
-from dotenv import load_dotenv
+from config import ADMIN_ID, MAIN_MENU
+from tg_api import get_updates, send_message
 from snmp_scanner import get_keys_status
-from db_manager import load_keys, save_keys  # <--- Добавили save_keys
-
-# Подгружаем секреты
-load_dotenv()
-
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-ADMIN_ID = os.getenv("ADMIN_ID")
-
-if not TOKEN or not ADMIN_ID:
-    print("🚨 Ошибка: Не найден токен или ID админа в файле .env!")
-    exit(1)
-
-BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
-
-# Главное меню вынесем в отдельную переменную, чтобы удобно было возвращать
-MAIN_MENU = {
-    "keyboard": [
-        [{"text": "🔄 Статус ключей"}],
-        [{"text": "⚙️ Настройки"}]
-    ],
-    "resize_keyboard": True,
-    "is_persistent": True
-}
-
-
-def get_updates(offset=None):
-    url = f"{BASE_URL}getUpdates"
-    params = {"timeout": 3, "offset": offset}
-    try:
-        response = requests.get(url, params=params)
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Ошибка сети: {e}")
-        return None
-
-
-def send_message(chat_id, text, reply_markup=None):
-    url = f"{BASE_URL}sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
-    if reply_markup:
-        payload["reply_markup"] = json.dumps(reply_markup)
-    requests.post(url, json=payload)
+from db_manager import load_keys, save_keys
 
 
 def process_status_request(chat_id):
+    """
+    Unified handler for requesting and sending the current status of all keys.
+    """
     send_message(chat_id, "Опрашиваю свитч... ⏳")
     status_dict = get_keys_status()
     keys_db = load_keys()
@@ -65,15 +25,16 @@ def process_status_request(chat_id):
 
 
 def main():
-    print("Бот запущен и перешел в режим ожидания...")
+    print("Bot started and waiting for updates...")
     last_update_id = None
     previous_state = get_keys_status() or {}
 
-    # --- FSM ПАМЯТЬ ---
-    # Словарь, где мы будем хранить текущий шаг диалога для каждого юзера
+    # --- FSM MEMORY ---
+    # Dictionary to store the current dialogue state for each user
     user_states = {}
 
     while True:
+        # --- BLOCK 1: HANDLE INCOMING TELEGRAM UPDATES ---
         updates = get_updates(last_update_id)
 
         if updates and updates.get("ok"):
@@ -82,35 +43,33 @@ def main():
 
                 if "message" in item:
                     message = item["message"]
-                    chat_id = message.get("chat", {}).get("id")
+                    chat_id = str(message.get("chat", {}).get("id"))
                     text = message.get("text", "")
 
                     if chat_id and text:
                         text = text.strip()
 
-                        # --- 🛡️ ЩИТ БЕЗОПАСНОСТИ ---
-                        if str(chat_id) != str(ADMIN_ID):
-                            print(f"🚨 Попытка доступа от чужака: {chat_id}")
+                        # --- SECURITY SHIELD ---
+                        if chat_id != str(ADMIN_ID):
+                            print(f"🚨 Unauthorized access attempt from: {chat_id}")
                             send_message(chat_id, "⛔️ Доступ запрещен. Я работаю только со своим создателем.")
-                            continue  # Команда continue прерывает текущий шаг цикла. Бот забудет про это сообщение.
-                        # ---------------------------
+                            continue
 
                         print(f"[{chat_id}]: {text}")
 
-                        # --- ЛОГИКА ОТМЕНЫ ДЕЙСТВИЯ ---
+                        # --- CANCEL ACTION LOGIC ---
                         if text == "❌ Отмена":
                             if chat_id in user_states:
-                                del user_states[chat_id]  # Стираем память состояний
+                                del user_states[chat_id]
                             send_message(chat_id, "Действие отменено.", reply_markup=MAIN_MENU)
-                            continue  # Переходим к следующему сообщению, игнорируя код ниже
+                            continue
 
-                        # --- FSM: ПРОВЕРЯЕМ, НАХОДИТСЯ ЛИ ЮЗЕР В ДИАЛОГЕ ---
+                        # --- FSM: CHECK IF USER IS IN A DIALOGUE STATE ---
                         current_state = user_states.get(chat_id, {}).get("state")
 
                         if current_state == "WAITING_FOR_PORT":
                             valid_ports = ["2", "3", "4", "5", "6", "7"]
                             if text in valid_ports:
-                                # Юзер ввел правильный порт. Запоминаем его и переводим на следующий шаг
                                 user_states[chat_id] = {"state": "WAITING_FOR_NAME", "port": text}
                                 send_message(
                                     chat_id,
@@ -119,26 +78,23 @@ def main():
                                 )
                             else:
                                 send_message(chat_id, "Пожалуйста, выбери номер порта от 2 до 7 (или нажми Отмена).")
-                            continue  # Прерываем стандартную обработку
+                            continue
 
                         elif current_state == "WAITING_FOR_NAME":
-                            # Юзер прислал новое имя!
                             port = user_states[chat_id]["port"]
                             keys_db = load_keys()
 
-                            # Обновляем базу
                             if port not in keys_db:
                                 keys_db[port] = {}
                             keys_db[port]["name"] = text
                             save_keys(keys_db)
 
-                            # Сбрасываем состояние и возвращаем главное меню
                             del user_states[chat_id]
                             send_message(chat_id, f"✅ Супер! Ключ на порту {port} теперь называется «{text}».",
                                          reply_markup=MAIN_MENU)
                             continue
 
-                        # --- СТАНДАРТНАЯ МАРШРУТИЗАЦИЯ (ЕСЛИ ЮЗЕР НЕ В ДИАЛОГЕ) ---
+                        # --- STANDARD ROUTING (IF USER IS NOT IN A DIALOGUE) ---
                         if text == "/start":
                             send_message(chat_id, "Привет! На связи твоя ключница.", reply_markup=MAIN_MENU)
 
@@ -146,10 +102,7 @@ def main():
                             process_status_request(chat_id)
 
                         elif text == "⚙️ Настройки":
-                            # Запускаем диалог FSM
                             user_states[chat_id] = {"state": "WAITING_FOR_PORT"}
-
-                            # Делаем удобную клавиатуру с номерами портов
                             ports_keyboard = {
                                 "keyboard": [
                                     [{"text": "2"}, {"text": "3"}, {"text": "4"}],
@@ -165,7 +118,7 @@ def main():
                             send_message(chat_id, "Я такой команды не знаю. Воспользуйся меню 👇",
                                          reply_markup=MAIN_MENU)
 
-        # --- БЛОК 2: ФОНОВЫЙ МОНИТОРИНГ (PUSH-АЛЕРТЫ) ---
+        # --- BLOCK 2: BACKGROUND HARDWARE MONITORING (PUSH ALERTS) ---
         current_state = get_keys_status()
         if current_state:
             keys_db = load_keys()
