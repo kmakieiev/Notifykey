@@ -1,10 +1,11 @@
 import json
 import os
 import datetime
+from localization import t
 
 HIST_FILE = "history.json"
 DB_FILE = "keys_db.json"
-HIST_FILE = "history.json"
+LANG_FILE = "language.json"
 
 def log_event(port, name, state):
     """Logs a hardware event with a timestamp."""
@@ -30,19 +31,19 @@ def log_event(port, name, state):
 def get_history():
     """Returns the last logged events as a single string."""
     if not os.path.exists(HIST_FILE):
-        return "История пуста 📭"
+        return "History is empty 📭"
     with open(HIST_FILE, "r", encoding="utf-8") as f:
         history = json.load(f)
-        return "\n".join(history) if history else "История пуста 📭"
+        return "\n".join(history) if history else "History is empty 📭"
 
 # Default schema for the first run if the database file does not exist
 DEFAULT_DB = {
-    "2": {"name": "Ключ 2"},
-    "3": {"name": "Ключ 3"},
-    "4": {"name": "Ключ 4"},
-    "5": {"name": "Ключ 5"},
-    "6": {"name": "Ключ 6"},
-    "7": {"name": "Ключ 7"}
+    "2": {"name": "Key 2"},
+    "3": {"name": "Key 3"},
+    "4": {"name": "Key 4"},
+    "5": {"name": "Key 5"},
+    "6": {"name": "Key 6"},
+    "7": {"name": "Key 7"}
 }
 
 def load_keys():
@@ -51,7 +52,7 @@ def load_keys():
     Creates and returns a default schema if the file is missing.
     """
     if not os.path.exists(DB_FILE):
-        print("Database not found. Creating an initial keys_db.json...")
+        print(t("database_not_found"))
         save_keys(DEFAULT_DB)
         return dict(DEFAULT_DB)
 
@@ -59,7 +60,7 @@ def load_keys():
         with open(DB_FILE, "r", encoding="utf-8") as file:
             return json.load(file)
     except json.JSONDecodeError:
-        print("🚨 JSON Read Error! File is corrupted. Returning default settings.")
+        print(t("json_error"))
         return dict(DEFAULT_DB)
 
 
@@ -69,3 +70,22 @@ def save_keys(data):
     """
     with open(DB_FILE, "w", encoding="utf-8") as file:
         json.dump(data, file, ensure_ascii=False, indent=4)
+
+
+def save_language(lang_code: str):
+    """Save the selected language preference."""
+    with open(LANG_FILE, "w", encoding="utf-8") as file:
+        json.dump({"language": lang_code}, file, ensure_ascii=False, indent=4)
+
+
+def load_language():
+    """Load the saved language preference. Default to 'en'."""
+    if not os.path.exists(LANG_FILE):
+        return "en"
+    try:
+        with open(LANG_FILE, "r", encoding="utf-8") as file:
+            data = json.load(file)
+            return data.get("language", "en")
+    except json.JSONDecodeError:
+        return "en"
+

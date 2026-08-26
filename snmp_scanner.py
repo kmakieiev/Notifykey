@@ -1,9 +1,9 @@
 import subprocess
-
+from localization import t
 
 
 def get_keys_status():
-    """Опрашивает свитч по SNMP и возвращает словарь со статусами ключей (только порты 2-7)."""
+    """Queries the switch via SNMP and returns a dictionary with key statuses (ports 2-7 only)."""
 
     command = [
         "snmpwalk", "-v", "2c", "-c", "public",
@@ -14,7 +14,7 @@ def get_keys_status():
         result = subprocess.run(command, capture_output=True, text=True, check=True)
         raw_output = result.stdout
     except subprocess.CalledProcessError as e:
-        print(f"Ошибка при опросе свитча: {e}")
+        print(f"{t('error_querying')} {e}")
         return None
 
     keys_status = {}
@@ -28,25 +28,25 @@ def get_keys_status():
 
             value = int(val_part.split(":")[1].strip())
 
-            # Нас интересуют только порты HP (5001 - 5008)
+            # We're interested only in HP ports (5001 - 5008)
             if port_index.startswith("500") and len(port_index) == 4:
                 port_num = int(port_index) - 5000
 
-                # Фильтруем инфраструктуру: оставляем СТРОГО порты с 2 по 7
+                # Filter infrastructure: keep STRICTLY ports 2 through 7
                 if 2 <= port_num <= 7:
-                    # 1 = Up (Ключ на месте), 2 = Down (Ключ забрали)
+                    # 1 = Up (Key in place), 2 = Down (Key removed)
                     if value == 1:
-                        keys_status[port_num] = "Вставлен 🟢"
+                        keys_status[port_num] = t("key_inserted")
                     else:
-                        keys_status[port_num] = "Отсутствует 🔴"
+                        keys_status[port_num] = t("key_missing")
 
     return keys_status
 
 
-# Блок для независимого тестирования
+# Block for independent testing
 if __name__ == "__main__":
     status = get_keys_status()
     if status:
-        print("Текущее состояние ключей (порты 2-7):")
+        print(t("current_key_status"))
         for port, state in sorted(status.items()):
-            print(f"Ключ {port}: {state}")
+            print(f"Key {port}: {state}")
