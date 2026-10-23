@@ -11,3 +11,8 @@ __pycache__/
 
 # Настройки PyCharm (чтобы не тянуть твои пути к папкам на GitHub)
 .idea/
+
+# Локальные файлы состояния БД и языка
+keys_db.json
+language.json
+history.json

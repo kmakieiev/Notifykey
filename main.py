@@ -51,6 +51,8 @@ def main():
 
     last_update_id = None
     previous_state = get_keys_status() or {}
+    last_snmp_poll = time.monotonic()
+    snmp_poll_interval = 5.0
 
     user_states = {}
 
@@ -68,10 +70,9 @@ def main():
                     text = message.get("text", "").strip()
                     message_id = message.get("message_id")
 
-                    # 1. Security check
+                    # 1. Security check (silently drop unauthorized updates)
                     if chat_id != str(ADMIN_ID):
                         print(f"🚨 {t('unauthorized_attempt')} {chat_id}")
-                        send_message(chat_id, t("access_denied"))
                         continue
 
                     # 2. Delete user message (Clean Chat)
@@ -174,28 +175,31 @@ def main():
                         update_bot_message(chat_id, t("command_not_recognized"), get_main_menu())
 
         # --- BLOCK 2: BACKGROUND HARDWARE MONITORING ---
-        current_hw_state = get_keys_status()
-        if current_hw_state:
-            keys_db = load_keys()
-            for port, status in current_hw_state.items():
-                old_status = previous_state.get(port)
-                if old_status and status != old_status:
-                    key_name = keys_db.get(str(port), {}).get("name", t("key_default_name", port=port))
+        now = time.monotonic()
+        if now - last_snmp_poll >= snmp_poll_interval:
+            last_snmp_poll = now
+            current_hw_state = get_keys_status()
+            if current_hw_state:
+                keys_db = load_keys()
+                for port, status in current_hw_state.items():
+                    old_status = previous_state.get(port)
+                    if old_status and status != old_status:
+                        key_name = keys_db.get(str(port), {}).get("name", t("key_default_name", port=port))
 
-                    # 1. Write event to history log
-                    log_event(port, key_name, status)
+                        # 1. Write event to history log
+                        log_event(port, key_name, status)
 
-                    # 2. FORCE interrupt the dialog (set alert state)
-                    user_states[ADMIN_ID] = {"state": "WAITING_FOR_ALERT_ACK"}
+                        # 2. FORCE interrupt the dialog (set alert state)
+                        user_states[ADMIN_ID] = {"state": "WAITING_FOR_ALERT_ACK"}
 
-                    # 3. Show priority notification
-                    alert_msg = t("alert_message", key_name=key_name, port=port, status=status)
-                    update_bot_message(ADMIN_ID, alert_msg, get_alert_menu())
-                    print(f"{t('alert_pushed')} {alert_msg}")
+                        # 3. Show priority notification
+                        alert_msg = t("alert_message", key_name=key_name, port=port, status=status)
+                        update_bot_message(ADMIN_ID, alert_msg, get_alert_menu())
+                        print(f"{t('alert_pushed')} {alert_msg}")
 
-            previous_state = current_hw_state
+                previous_state = current_hw_state
 
-        time.sleep(0.1)
+        time.sleep(0.5)
 
 
 if __name__ == "__main__":

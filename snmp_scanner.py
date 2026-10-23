@@ -5,15 +5,19 @@ from localization import t
 def get_keys_status():
     """Queries the switch via SNMP and returns a dictionary with key statuses (ports 2-7 only)."""
 
+    # Query only ports 2-7 (HP OIDs 5002-5007) in a single UDP request to avoid overloading switch CPU
+    target_oids = [f"1.3.6.1.2.1.2.2.1.8.{5000 + p}" for p in range(2, 8)]
     command = [
-        "snmpwalk", "-v", "2c", "-c", "public",
-        "192.168.0.211", "1.3.6.1.2.1.2.2.1.8"
+        "snmpget", "-v", "2c", "-c", "public",
+        "-t", "1", "-r", "1",
+        "192.168.0.211",
+        *target_oids,
     ]
 
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=3)
         raw_output = result.stdout
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         print(f"{t('error_querying')} {e}")
         return None
 
